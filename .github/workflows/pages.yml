@@ -1,0 +1,55 @@
+name: Deploy to GitHub Pages
+
+# site/ is the built web version, published as it is; game.bin is over git's 100 MB limit, so it stays on the
+# latest release with game.meta.json and start.pack.json and is copied beside the page here (same origin, no cors)
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Package the site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Fetch game.bin from the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
+          [ -n "$tag" ] || exit 0
+          for name in game.bin game.meta.json start.pack.json; do
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$name" --output "site/$name" \
+              && echo "$name from $tag: $(stat -c %s "site/$name") bytes" || true
+          done
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
